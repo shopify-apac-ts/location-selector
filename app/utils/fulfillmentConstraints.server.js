@@ -55,30 +55,25 @@ export async function createFulfillmentConstraintRule(admin) {
  */
 export async function getFulfillmentConstraintRule(admin) {
   const query = `#graphql
-    query fulfillmentConstraintRules($first: Int!) {
-      fulfillmentConstraintRules(first: $first) {
-        edges {
-          node {
-            id
-            functionId
-            enabled
-            deliveryMethodTypes
-          }
+    query fulfillmentConstraintRules {
+      fulfillmentConstraintRules {
+        id
+        function {
+          id
         }
+        deliveryMethodTypes
       }
     }
   `;
 
   try {
-    const response = await admin.graphql(query, { 
-      variables: { first: 50 } 
-    });
+    const response = await admin.graphql(query);
     const result = await response.json();
     
-    const rules = result.data?.fulfillmentConstraintRules?.edges || [];
-    const existingRule = rules.find(edge => edge.node.functionId === FUNCTION_ID);
+    const rules = result.data?.fulfillmentConstraintRules || [];
+    const existingRule = rules.find(rule => rule.function.id === FUNCTION_ID);
     
-    return existingRule?.node || null;
+    return existingRule || null;
   } catch (error) {
     console.error("Error fetching fulfillment constraint rules:", error);
     return null;

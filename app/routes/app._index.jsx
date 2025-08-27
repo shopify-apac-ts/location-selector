@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher, useLoaderData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -15,11 +15,32 @@ import {
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { ensureFulfillmentConstraintRule } from "../utils/fulfillmentConstraints.server";
+import { ensureAppLocationListMetafield } from "../utils/appMetafields.server";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
 
-  return null;
+  // Automatically ensure app metafield is set up on page load
+  try {
+    const metafieldResult = await ensureAppLocationListMetafield(admin);
+    return {
+      appMetafieldStatus: {
+        success: true,
+        isSetup: true,
+        wasUpdated: metafieldResult.wasUpdated,
+        locationCount: metafieldResult.locationNames.length
+      }
+    };
+  } catch (error) {
+    console.error("Failed to setup app metafield on load:", error);
+    return {
+      appMetafieldStatus: {
+        success: false,
+        isSetup: false,
+        error: error.message
+      }
+    };
+  }
 };
 
 export const action = async ({ request }) => {
@@ -39,6 +60,25 @@ export const action = async ({ request }) => {
       return {
         success: false,
         message: `Failed to register fulfillment constraint rule: ${error.message}`,
+        error: error.message,
+      };
+    }
+  }
+
+  if (action === "setupAppMetafield") {
+    try {
+      const result = await ensureAppLocationListMetafield(admin);
+      return {
+        success: true,
+        message: result.wasUpdated 
+          ? "App metafield updated with current store locations" 
+          : "App metafield is already up to date",
+        metafieldData: result,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to setup app metafield: ${error.message}`,
         error: error.message,
       };
     }
@@ -110,6 +150,7 @@ export const action = async ({ request }) => {
 
 export default function Index() {
   const fetcher = useFetcher();
+  const loaderData = useLoaderData();
   const shopify = useAppBridge();
   const isLoading =
     ["loading", "submitting"].includes(fetcher.state) &&
@@ -129,10 +170,14 @@ export default function Index() {
     if (fetcher.data?.success === false) {
       shopify.toast.show(fetcher.data.message, { isError: true });
     }
+    if (fetcher.data?.metafieldData) {
+      shopify.toast.show("App locations metafield setup completed");
+    }
   }, [productId, fetcher.data, shopify]);
   
   const generateProduct = () => fetcher.submit({}, { method: "POST" });
   const registerFulfillmentRule = () => fetcher.submit({ action: "registerFulfillmentRule" }, { method: "POST" });
+  const setupAppMetafield = () => fetcher.submit({ action: "setupAppMetafield" }, { method: "POST" });
 
   return (
     <Page>
@@ -180,13 +225,32 @@ export default function Index() {
                     Location Selector Function
                   </Text>
                   <Text as="p" variant="bodyMd">
-                    Register the fulfillment constraint rule to enable the location selector function.
-                    This allows customers to specify their preferred fulfillment location via a metafield.
+                    Set up the location selector function in two steps: First, click "Setup Location List" to configure available locations from your store. 
+                    Then, click "Register Fulfillment Rule" to enable the constraint function that routes orders based on customer preferences.
                   </Text>
+                  {loaderData?.appMetafieldStatus && (
+                    <Box
+                      padding="300"
+                      background={loaderData.appMetafieldStatus.success ? "bg-surface-success" : "bg-surface-critical"}
+                      borderWidth="025"
+                      borderRadius="200"
+                      borderColor={loaderData.appMetafieldStatus.success ? "border-success" : "border-critical"}
+                    >
+                      <Text as="p" variant="bodyMd">
+                        📍 App Location List: {loaderData.appMetafieldStatus.success 
+                          ? `✅ Ready (${loaderData.appMetafieldStatus.locationCount} locations${loaderData.appMetafieldStatus.wasUpdated ? ', updated on load' : ''})`
+                          : `❌ Error: ${loaderData.appMetafieldStatus.error}`
+                        }
+                      </Text>
+                    </Box>
+                  )}
                 </BlockStack>
                 <InlineStack gap="300">
                   <Button loading={isLoading} onClick={registerFulfillmentRule}>
                     Register Fulfillment Rule
+                  </Button>
+                  <Button loading={isLoading} onClick={setupAppMetafield} variant="secondary">
+                    Setup Location List
                   </Button>
                 </InlineStack>
                 {fetcher.data?.rule && (
@@ -208,6 +272,52 @@ export default function Index() {
                         </code>
                       </pre>
                     </Box>
+                  </>
+                )}
+                {fetcher.data?.metafieldData && (
+                  <>
+                    <Text as="h3" variant="headingMd">
+                      App Location List Metafield
+                    </Text>
+                    <Text as="p" variant="bodyMd">
+                      This metafield contains the list of locations available for selection in the admin extension.
+                      {fetcher.data.metafieldData.wasUpdated ? ' It was updated with current store locations.' : ' It is up to date.'}
+                    </Text>
+                    <BlockStack gap="200">
+                      <Text as="h4" variant="headingSm">
+                        Available Locations ({fetcher.data.metafieldData.locationNames.length})
+                      </Text>
+                      <Box
+                        padding="300"
+                        background="bg-surface-secondary"
+                        borderWidth="025"
+                        borderRadius="200"
+                        borderColor="border"
+                      >
+                        <List>
+                          {fetcher.data.metafieldData.locationNames.map((location, index) => (
+                            <List.Item key={index}>{location}</List.Item>
+                          ))}
+                        </List>
+                      </Box>
+                      <Text as="h4" variant="headingSm">
+                        Metafield Details
+                      </Text>
+                      <Box
+                        padding="400"
+                        background="bg-surface-active"
+                        borderWidth="025"
+                        borderRadius="200"
+                        borderColor="border"
+                        overflowX="scroll"
+                      >
+                        <pre style={{ margin: 0 }}>
+                          <code>
+                            {JSON.stringify(fetcher.data.metafieldData.metafield, null, 2)}
+                          </code>
+                        </pre>
+                      </Box>
+                    </BlockStack>
                   </>
                 )}
                 <BlockStack gap="200">
