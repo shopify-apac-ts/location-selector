@@ -1,0 +1,20 @@
+query CartFulfillmentConstraintsGenerateRunInput {
+  cart {
+    deliverableLines {
+      id
+    }
+    buyerIdentity {
+      customer {
+        id
+        email
+        metafield(namespace: "custom", key: "fulfillment_location") {
+          value
+        }
+      }
+    }
+  }
+  locations {
+    id
+    name
+  }
+}
