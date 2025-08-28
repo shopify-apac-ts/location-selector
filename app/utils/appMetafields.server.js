@@ -79,9 +79,9 @@ export async function getStoreLocations(admin) {
  */
 export async function getAppLocationListMetafield(admin) {
   const query = `#graphql
-    query appMetafields($namespace: String!, $key: String!) {
+    query appMetafields($first: Int!) {
       currentAppInstallation {
-        metafields(namespace: $namespace, keys: [$key], first: 1) {
+        metafields(first: $first) {
           edges {
             node {
               id
@@ -99,14 +99,19 @@ export async function getAppLocationListMetafield(admin) {
   try {
     const response = await admin.graphql(query, {
       variables: {
-        namespace: "custom",
-        key: "fulfillment_location_list"
+        first: 10
       }
     });
     const result = await response.json();
     
     const edges = result.data?.currentAppInstallation?.metafields?.edges || [];
-    return edges.length > 0 ? edges[0].node : null;
+    
+    // Filter to find the specific metafield we want
+    const fulfillmentLocationMetafield = edges.find(edge => 
+      edge.node.namespace === "custom" && edge.node.key === "fulfillment_location_list"
+    );
+    
+    return fulfillmentLocationMetafield?.node || null;
   } catch (error) {
     console.error("Error fetching app metafield:", error);
     return null;

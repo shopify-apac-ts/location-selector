@@ -14,7 +14,7 @@ import {
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import { ensureFulfillmentConstraintRule } from "../utils/fulfillmentConstraints.server";
+import { ensureFulfillmentConstraintRule, unregisterFulfillmentConstraintRule } from "../utils/fulfillmentConstraints.server";
 import { ensureAppLocationListMetafield } from "../utils/appMetafields.server";
 
 export const loader = async ({ request }) => {
@@ -84,67 +84,27 @@ export const action = async ({ request }) => {
     }
   }
 
-  // Original product creation logic
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
-  const product = responseJson.data.productCreate.product;
-  const variantId = product.variants.edges[0].node.id;
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyRemixTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
-        }
-      }
-    }`,
-    {
-      variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
-  const variantResponseJson = await variantResponse.json();
+  if (action === "unregisterFulfillmentRule") {
+    try {
+      const result = await unregisterFulfillmentConstraintRule(admin);
+      return {
+        success: true,
+        message: result.message,
+        unregisterData: result,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to unregister fulfillment constraint rule: ${error.message}`,
+        error: error.message,
+      };
+    }
+  }
 
+  // No other actions supported
   return {
-    product: responseJson.data.productCreate.product,
-    variant: variantResponseJson.data.productVariantsBulkUpdate.productVariants,
+    success: false,
+    message: "Unknown action",
   };
 };
 
@@ -155,17 +115,18 @@ export default function Index() {
   const isLoading =
     ["loading", "submitting"].includes(fetcher.state) &&
     fetcher.formMethod === "POST";
-  const productId = fetcher.data?.product?.id.replace(
-    "gid://shopify/Product/",
-    "",
-  );
 
   useEffect(() => {
-    if (productId) {
-      shopify.toast.show("Product created");
-    }
     if (fetcher.data?.success === true) {
-      shopify.toast.show("Fulfillment constraint rule registered successfully");
+      if (fetcher.data?.unregisterData) {
+        shopify.toast.show(
+          fetcher.data.unregisterData.wasDeleted 
+            ? "Fulfillment rule successfully unregistered" 
+            : "No fulfillment rule found to unregister"
+        );
+      } else {
+        shopify.toast.show("Operation completed successfully");
+      }
     }
     if (fetcher.data?.success === false) {
       shopify.toast.show(fetcher.data.message, { isError: true });
@@ -173,19 +134,15 @@ export default function Index() {
     if (fetcher.data?.metafieldData) {
       shopify.toast.show("App locations metafield setup completed");
     }
-  }, [productId, fetcher.data, shopify]);
+  }, [fetcher.data, shopify]);
   
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
   const registerFulfillmentRule = () => fetcher.submit({ action: "registerFulfillmentRule" }, { method: "POST" });
+  const unregisterFulfillmentRule = () => fetcher.submit({ action: "unregisterFulfillmentRule" }, { method: "POST" });
   const setupAppMetafield = () => fetcher.submit({ action: "setupAppMetafield" }, { method: "POST" });
 
   return (
     <Page>
-      <TitleBar title="Remix app template">
-        <button variant="primary" onClick={generateProduct}>
-          Generate a product
-        </button>
-      </TitleBar>
+      <TitleBar title="Location Selector App" />
       <BlockStack gap="500">
         <Layout>
           <Layout.Section>
@@ -193,31 +150,12 @@ export default function Index() {
               <BlockStack gap="500">
                 <BlockStack gap="200">
                   <Text as="h2" variant="headingMd">
-                    Congrats on creating a new Shopify app 🎉
+                    Location Selector App 📍
                   </Text>
                   <Text variant="bodyMd" as="p">
-                    This embedded app template uses{" "}
-                    <Link
-                      url="https://shopify.dev/docs/apps/tools/app-bridge"
-                      target="_blank"
-                      removeUnderline
-                    >
-                      App Bridge
-                    </Link>{" "}
-                    interface examples like an{" "}
-                    <Link url="/app/additional" removeUnderline>
-                      additional page in the app nav
-                    </Link>
-                    , as well as an{" "}
-                    <Link
-                      url="https://shopify.dev/docs/api/admin-graphql"
-                      target="_blank"
-                      removeUnderline
-                    >
-                      Admin GraphQL
-                    </Link>{" "}
-                    mutation demo, to provide a starting point for app
-                    development.
+                    This app enables customers to specify their preferred fulfillment location during checkout. 
+                    The app includes a Shopify Function that applies fulfillment constraints based on customer preferences 
+                    and an Admin Action extension for managing location settings on draft orders.
                   </Text>
                 </BlockStack>
                 <BlockStack gap="200">
@@ -249,6 +187,9 @@ export default function Index() {
                   <Button loading={isLoading} onClick={registerFulfillmentRule}>
                     Register Fulfillment Rule
                   </Button>
+                  <Button loading={isLoading} onClick={unregisterFulfillmentRule} variant="primary" tone="critical">
+                    Unregister Fulfillment Rule
+                  </Button>
                   <Button loading={isLoading} onClick={setupAppMetafield} variant="secondary">
                     Setup Location List
                   </Button>
@@ -269,6 +210,51 @@ export default function Index() {
                       <pre style={{ margin: 0 }}>
                         <code>
                           {JSON.stringify(fetcher.data.rule, null, 2)}
+                        </code>
+                      </pre>
+                    </Box>
+                  </>
+                )}
+                {fetcher.data?.unregisterData && (
+                  <>
+                    <Text as="h3" variant="headingMd">
+                      🗑️ Unregister Fulfillment Rule Result
+                    </Text>
+                    <Box
+                      padding="400"
+                      background={fetcher.data.unregisterData.wasDeleted ? "bg-surface-success" : "bg-surface-secondary"}
+                      borderWidth="025"
+                      borderRadius="200"
+                      borderColor={fetcher.data.unregisterData.wasDeleted ? "border-success" : "border"}
+                    >
+                      <BlockStack gap="200">
+                        <Text as="p" variant="bodyMd">
+                          <strong>Status:</strong> {fetcher.data.unregisterData.wasDeleted ? "✅ Rule Deleted" : "ℹ️ No Rule Found"}
+                        </Text>
+                        <Text as="p" variant="bodyMd">
+                          <strong>Message:</strong> {fetcher.data.unregisterData.message}
+                        </Text>
+                        {fetcher.data.unregisterData.deletedRuleId && (
+                          <Text as="p" variant="bodyMd">
+                            <strong>Deleted Rule ID:</strong> {fetcher.data.unregisterData.deletedRuleId}
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </Box>
+                    <Text as="h4" variant="headingSm">
+                      Debug Information
+                    </Text>
+                    <Box
+                      padding="400"
+                      background="bg-surface-active"
+                      borderWidth="025"
+                      borderRadius="200"
+                      borderColor="border"
+                      overflowX="scroll"
+                    >
+                      <pre style={{ margin: 0 }}>
+                        <code>
+                          {JSON.stringify(fetcher.data.unregisterData, null, 2)}
                         </code>
                       </pre>
                     </Box>
@@ -320,77 +306,7 @@ export default function Index() {
                     </BlockStack>
                   </>
                 )}
-                <BlockStack gap="200">
-                  <Text as="h3" variant="headingMd">
-                    Get started with products
-                  </Text>
-                  <Text as="p" variant="bodyMd">
-                    Generate a product with GraphQL and get the JSON output for
-                    that product. Learn more about the{" "}
-                    <Link
-                      url="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-                      target="_blank"
-                      removeUnderline
-                    >
-                      productCreate
-                    </Link>{" "}
-                    mutation in our API references.
-                  </Text>
-                </BlockStack>
-                <InlineStack gap="300">
-                  <Button loading={isLoading} onClick={generateProduct}>
-                    Generate a product
-                  </Button>
-                  {fetcher.data?.product && (
-                    <Button
-                      url={`shopify:admin/products/${productId}`}
-                      target="_blank"
-                      variant="plain"
-                    >
-                      View product
-                    </Button>
-                  )}
-                </InlineStack>
-                {fetcher.data?.product && (
-                  <>
-                    <Text as="h3" variant="headingMd">
-                      {" "}
-                      productCreate mutation
-                    </Text>
-                    <Box
-                      padding="400"
-                      background="bg-surface-active"
-                      borderWidth="025"
-                      borderRadius="200"
-                      borderColor="border"
-                      overflowX="scroll"
-                    >
-                      <pre style={{ margin: 0 }}>
-                        <code>
-                          {JSON.stringify(fetcher.data.product, null, 2)}
-                        </code>
-                      </pre>
-                    </Box>
-                    <Text as="h3" variant="headingMd">
-                      {" "}
-                      productVariantsBulkUpdate mutation
-                    </Text>
-                    <Box
-                      padding="400"
-                      background="bg-surface-active"
-                      borderWidth="025"
-                      borderRadius="200"
-                      borderColor="border"
-                      overflowX="scroll"
-                    >
-                      <pre style={{ margin: 0 }}>
-                        <code>
-                          {JSON.stringify(fetcher.data.variant, null, 2)}
-                        </code>
-                      </pre>
-                    </Box>
-                  </>
-                )}
+
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -399,66 +315,40 @@ export default function Index() {
               <Card>
                 <BlockStack gap="200">
                   <Text as="h2" variant="headingMd">
-                    App template specs
+                    App Components
                   </Text>
                   <BlockStack gap="200">
                     <InlineStack align="space-between">
                       <Text as="span" variant="bodyMd">
-                        Framework
+                        Shopify Function
                       </Text>
-                      <Link
-                        url="https://remix.run"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        Remix
-                      </Link>
+                      <Text as="span" variant="bodyMd" color="subdued">
+                        Fulfillment Constraints
+                      </Text>
                     </InlineStack>
                     <InlineStack align="space-between">
                       <Text as="span" variant="bodyMd">
-                        Database
+                        Admin Extension
                       </Text>
-                      <Link
-                        url="https://www.prisma.io/"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        Prisma
-                      </Link>
+                      <Text as="span" variant="bodyMd" color="subdued">
+                        Draft Order Action
+                      </Text>
                     </InlineStack>
                     <InlineStack align="space-between">
                       <Text as="span" variant="bodyMd">
-                        Interface
+                        Location Storage
                       </Text>
-                      <span>
-                        <Link
-                          url="https://polaris.shopify.com"
-                          target="_blank"
-                          removeUnderline
-                        >
-                          Polaris
-                        </Link>
-                        {", "}
-                        <Link
-                          url="https://shopify.dev/docs/apps/tools/app-bridge"
-                          target="_blank"
-                          removeUnderline
-                        >
-                          App Bridge
-                        </Link>
-                      </span>
+                      <Text as="span" variant="bodyMd" color="subdued">
+                        App Metafields
+                      </Text>
                     </InlineStack>
                     <InlineStack align="space-between">
                       <Text as="span" variant="bodyMd">
-                        API
+                        Customer Preferences
                       </Text>
-                      <Link
-                        url="https://shopify.dev/docs/api/admin-graphql"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        GraphQL API
-                      </Link>
+                      <Text as="span" variant="bodyMd" color="subdued">
+                        Customer Metafields
+                      </Text>
                     </InlineStack>
                   </BlockStack>
                 </BlockStack>
@@ -466,30 +356,20 @@ export default function Index() {
               <Card>
                 <BlockStack gap="200">
                   <Text as="h2" variant="headingMd">
-                    Next steps
+                    How to Use
                   </Text>
                   <List>
                     <List.Item>
-                      Build an{" "}
-                      <Link
-                        url="https://shopify.dev/docs/apps/getting-started/build-app-example"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        {" "}
-                        example app
-                      </Link>{" "}
-                      to get started
+                      Set up location list using "Setup Location List" button
                     </List.Item>
                     <List.Item>
-                      Explore Shopify’s API with{" "}
-                      <Link
-                        url="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        GraphiQL
-                      </Link>
+                      Register the fulfillment constraint rule
+                    </List.Item>
+                    <List.Item>
+                      Use the "Select / Update Fulfillment Location" action on draft orders
+                    </List.Item>
+                    <List.Item>
+                      Customer preferences will be applied during checkout
                     </List.Item>
                   </List>
                 </BlockStack>

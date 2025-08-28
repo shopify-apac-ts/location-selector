@@ -45,10 +45,12 @@ function App() {
                 email
                 displayName
                 metafield(namespace: "custom", key: "fulfillment_location") {
+                  id
                   value
                 }
               }
               metafield(namespace: "custom", key: "fulfillment_location") {
+                id
                 value
               }
             }
@@ -143,6 +145,17 @@ function App() {
         }
 
         setDraftOrder(draftOrderData);
+
+        // Debug existing metafield values
+        console.log('=== EXISTING METAFIELD VALUES ===');
+        console.log('Customer metafield:', {
+          id: draftOrderData.customer?.metafield?.id,
+          value: draftOrderData.customer?.metafield?.value
+        });
+        console.log('Draft order metafield:', {
+          id: draftOrderData?.metafield?.id,
+          value: draftOrderData?.metafield?.value
+        });
 
         // Check if customer is attached
         if (!draftOrderData.customer) {
@@ -259,6 +272,7 @@ function App() {
             customer {
               id
               metafield(namespace: "custom", key: "fulfillment_location") {
+                id
                 value
               }
             }
@@ -271,6 +285,7 @@ function App() {
             draftOrder {
               id
               metafield(namespace: "custom", key: "fulfillment_location") {
+                id
                 value
               }
             }
@@ -282,28 +297,46 @@ function App() {
         }
       `;
 
+      // Prepare customer metafield - include ID if it exists (for updates)
+      const customerMetafield = {
+        namespace: "custom",
+        key: "fulfillment_location",
+        value: selectedLocation,
+        type: "single_line_text_field"
+      };
+      
+      // If customer already has this metafield, include the ID for update
+      if (customer.metafield?.id) {
+        customerMetafield.id = customer.metafield.id;
+        console.log('Customer has existing metafield, including ID for update:', customer.metafield.id);
+      } else {
+        console.log('Customer has no existing metafield, creating new one');
+      }
+      
+      // Prepare draft order metafield - include ID if it exists (for updates)  
+      const draftOrderMetafield = {
+        namespace: "custom",
+        key: "fulfillment_location",
+        value: selectedLocation,
+        type: "single_line_text_field"
+      };
+      
+      // If draft order already has this metafield, include the ID for update
+      if (draftOrder.metafield?.id) {
+        draftOrderMetafield.id = draftOrder.metafield.id;
+        console.log('Draft order has existing metafield, including ID for update:', draftOrder.metafield.id);
+      } else {
+        console.log('Draft order has no existing metafield, creating new one');
+      }
+
       const mutationVariables = {
         customerInput: {
           id: customer.id,
-          metafields: [
-            {
-              namespace: "custom",
-              key: "fulfillment_location",
-              value: selectedLocation,
-              type: "single_line_text_field"
-            }
-          ]
+          metafields: [customerMetafield]
         },
         draftOrderId: draftOrder.id,
         draftOrderInput: {
-          metafields: [
-            {
-              namespace: "custom",
-              key: "fulfillment_location",
-              value: selectedLocation,
-              type: "single_line_text_field"
-            }
-          ]
+          metafields: [draftOrderMetafield]
         }
       };
 
@@ -341,7 +374,7 @@ function App() {
 
       // Check for errors in both customer and draft order updates
       console.log('=== ANALYZING MUTATION RESULTS ===');
-      console.log('Full result object:', JSON.stringify(result, null, 2));
+//      console.log('Full result object:', JSON.stringify(result, null, 2));
       
       const customerErrors = result.data?.customerUpdate?.userErrors || [];
       const draftOrderErrors = result.data?.draftOrderUpdate?.userErrors || [];
